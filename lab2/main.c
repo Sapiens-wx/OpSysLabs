@@ -130,7 +130,7 @@ void handle_error(char* what_happened, char* fullname) {
 	switch(errno){
 		case ENOENT: err_code|=1; break;
 		case EACCES: err_code|=2; break;
-		default: err_code|=2; break;
+		default: err_code|=4; break;
 	}
     return;
 }
@@ -142,7 +142,7 @@ void handle_error(char* what_happened, char* fullname) {
  */
 bool test_file(char* pathandname) {
     struct stat sb;
-    if (stat(pathandname, &sb)) {
+    if (stat(pathandname, &sb)==-1) {
         handle_error("cannot access", pathandname);
         return false;
     }
@@ -201,10 +201,7 @@ void list_file(char* pathandname, char* name, bool list_long) {
     /* TODO: fill in*/
 	if(list_long){
 		struct stat info;
-		if(stat(pathandname, &info)==-1){
-			handle_error("cannot open file", name);
-			return;
-		}
+		stat(pathandname, &info);
 		//date string
 #define DATE_BUF_SIZE 16
 		char datestr[DATE_BUF_SIZE];
@@ -250,6 +247,7 @@ void list_dir(char* dirname, bool list_long, bool list_all, bool recursive) {
 		char pathandname[512];
 		if(list_all||entry->d_name[0]!='.'){
 			snprintf(pathandname, 512, "%s/%s", dirname, entry->d_name);
+			if(!test_file(pathandname)) continue;
 			list_file(pathandname, entry->d_name, list_long);
 		}
 	}

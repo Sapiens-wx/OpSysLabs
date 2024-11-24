@@ -20,12 +20,46 @@ static int err_code;
  * here are some function signatures and macros that may be helpful.
  */
 
+#define NOT_SELF(name) (!(name[0]=='.' && (name[1]==0 || (name[1]=='.' && name[2]==0))))
+
+const char* extract_file_name(const char* pathandname){
+	int n=strlen(pathandname);
+	int i;
+	for(i=n-1;i>=0;--i){
+		if(pathandname[i]=='/'){
+			break;
+		}
+	}
+	++i;
+	return pathandname+i;
+}
+int num_digits(int i){
+	int res=0;
+	for(;i;res++,i/=10);
+	return res;
+}
+void itos(char* buf, int n, unsigned int i){
+	int length=0;
+	for(;i&&length<n-1;){
+		buf[length]=i%10+'0';
+		i/=10;
+		length++;
+	}
+	for(int j=length>>1;j>=0;--j){
+		int tmp=buf[j];
+		buf[j]=buf[length-j-1];
+		buf[length-j-1]=tmp;
+	}
+	buf[length]=0;
+}
+
 void handle_error(char* fullname, char* action);
+void handle_error_noprint();
 bool test_file(char* pathandname);
 bool is_dir(char* pathandname);
 const char* ftype_to_str(mode_t mode);
-void list_file(char* pathandname, char* name, bool list_long);
-void list_dir(char* dirname, bool list_long, bool list_all, bool recursive);
+void list_file(const char* pathandname, const char* name, bool list_line, bool list_long);
+void list_dir(char* dirname, bool list_line, bool list_long, bool list_all, bool recursive);
 
 /*
  * You can use the NOT_YET_IMPLEMENTED macro to error out when you reach parts
@@ -66,6 +100,8 @@ void list_dir(char* dirname, bool list_long, bool list_all, bool recursive);
 static int uname_for_uid(uid_t uid, char* buf, size_t buflen) {
     struct passwd* p = getpwuid(uid);
     if (p == NULL) {
+		itos(buf, buflen, uid);
+		err_code|=0x60;
         return 1;
     }
     strncpy(buf, p->pw_name, buflen);
@@ -78,6 +114,8 @@ static int uname_for_uid(uid_t uid, char* buf, size_t buflen) {
 static int group_for_gid(gid_t gid, char* buf, size_t buflen) {
     struct group* g = getgrgid(gid);
     if (g == NULL) {
+		itos(buf, buflen, gid);
+		err_code|=0x60;
         return 1;
     }
     strncpy(buf, g->gr_name, buflen);
@@ -126,13 +164,16 @@ void handle_error(char* what_happened, char* fullname) {
     PRINT_ERROR("ls", what_happened, fullname);
 
     // TODO: your code here: inspect errno and set err_code accordingly.
+	handle_error_noprint();
+    return;
+}
+void handle_error_noprint(){
 	err_code|=0x80;
 	switch(errno){
 		case ENOENT: err_code|=1; break;
 		case EACCES: err_code|=2; break;
 		default: err_code|=4; break;
 	}
-    return;
 }
 
 /*
@@ -197,11 +238,11 @@ const char* ftype_to_str(mode_t mode) {
  *   requires only the 'name' part. So we pass in both. An alternative
  *   implementation would pass in pathandname and parse out 'name'.
  */
-void list_file(char* pathandname, char* name, bool list_long) {
+void list_file(const char* pathandname, const char* name, bool list_line, bool list_long) {
     /* TODO: fill in*/
+	struct stat info;
+	stat(pathandname, &info);
 	if(list_long){
-		struct stat info;
-		stat(pathandname, &info);
 		//date string
 #define DATE_BUF_SIZE 16
 		char datestr[DATE_BUF_SIZE];
@@ -210,11 +251,17 @@ void list_file(char* pathandname, char* name, bool list_long) {
 		char uname[ID_BUF_SIZE], group[ID_BUF_SIZE];
 		uname_for_uid(info.st_uid, uname, ID_BUF_SIZE);
 		group_for_gid(info.st_gid, group, ID_BUF_SIZE);
-		//isDir, modes, mode number, user, group, modified time, size,
-		printf("%s %4d %*s %*s %*s %6ld ", ftype_to_str(info.st_mode), (info.st_mode&S_IFMT)>>14, ID_BUF_SIZE, uname, ID_BUF_SIZE, group, DATE_BUF_SIZE, datestr, info.st_size);
+		//isDir & modes, st_nlink, user, group, size, modified time
+		printf("%s %ld %s %s %ld %s ", ftype_to_str(info.st_mode), info.st_nlink, uname, group, info.st_size, datestr);
 #undef ID_BUF_SIZE
 	}
-	printf("%s\n", name);
+	printf("%s",name);
+	if(NOT_SELF(name) && (info.st_mode&S_IFMT)==S_IFDIR)
+		putchar('/');
+	if(list_line || list_long)
+		putchar('\n');
+	else
+		putchar(' ');
 }
 
 /* list_dir():
@@ -225,7 +272,7 @@ void list_file(char* pathandname, char* name, bool list_long) {
  *    - list_all: are we in "-a" mode?
  *    - recursive: are we supposed to list sub-directories?
  */
-void list_dir(char* dirname, bool list_long, bool list_all, bool recursive) {
+void list_dir(char* dirname, bool list_line, bool list_long, bool list_all, bool recursive) {
     /* TODO: fill in
      *   You'll probably want to make use of:
      *       opendir()
@@ -237,21 +284,54 @@ void list_dir(char* dirname, bool list_long, bool list_all, bool recursive) {
      *       closedir()
      *   See the lab description for further hints
      */
+	//if it's not a directory, print its name
+	if(!is_dir(dirname)){
+		list_file(dirname, extract_file_name(dirname), list_line, list_long);
+		return;
+	}
 	DIR* dir=opendir(dirname);
 	if(dir==NULL){
 		handle_error("cannot open directory",dirname);
 		return;
 	}
+	//recursive queue
+#define QUEUE_SIZE 50
+#define QUEUE_PUSH(x) queue[queue_size++]=(x)
+#define QUEUE_PEEK (queue[queue_front])
+#define QUEUE_POP (queue[queue_front++])
+#define QUEUE_EMPTY (queue_front>=queue_size)
+	char* queue[QUEUE_SIZE];
+	int queue_front=0,queue_size=0;
+
 	struct dirent* entry;
+	if(recursive)
+		printf("%s:\n", dirname);
 	while((entry=readdir(dir))){
 		char pathandname[512];
 		if(list_all||entry->d_name[0]!='.'){
 			snprintf(pathandname, 512, "%s/%s", dirname, entry->d_name);
 			if(!test_file(pathandname)) continue;
-			list_file(pathandname, entry->d_name, list_long);
+			list_file(pathandname, entry->d_name, list_line, list_long);
+		}
+		//add recursive directory if not '.' or '..'
+		if(recursive && is_dir(pathandname) && !(entry->d_name[0]=='.' && (entry->d_name[1]==0 || (entry->d_name[1]=='.' && entry->d_name[2]==0)))){
+			int leafLength=strlen(pathandname)+1;
+			char* leaf=(char*)malloc(leafLength);
+			strcpy(leaf, pathandname);
+			QUEUE_PUSH(leaf);
 		}
 	}
+	if(!list_line)
+		putchar('\n');
+	if(recursive)
+		putchar('\n');
 	closedir(dir);
+
+	//list recursive directories
+	for(;!QUEUE_EMPTY;){
+		list_dir(QUEUE_PEEK, list_line, list_long, list_all, recursive);
+		free(QUEUE_POP);
+	}
 }
 
 int main(int argc, char* argv[]) {
@@ -259,7 +339,7 @@ int main(int argc, char* argv[]) {
     // unsigned.
     int opt;
     err_code = 0;
-    bool list_long = false, list_all = false, list_recursive = false;
+    bool list_long = false, list_all = false, list_recursive = false, list_line=true;
     // We make use of getopt_long for argument parsing, and this
     // (single-element) array is used as input to that function. The `struct
     // option` helps us parse arguments of the form `--FOO`. Refer to `man 3
@@ -281,6 +361,7 @@ int main(int argc, char* argv[]) {
             case '1':
                 // Safe to ignore since this is default behavior for our version
                 // of ls.
+				list_line=true;
                 break;
 			case 'l':
 				list_long=true;
@@ -303,12 +384,16 @@ int main(int argc, char* argv[]) {
     // TODO: Replace this.
 	//if there is no directory specified
     if (optind >= argc) {
-		list_dir(".",list_long,list_all,list_recursive);
+		list_dir(".",list_line, list_long,list_all,list_recursive);
     }else{
-		for (int i = optind; i < argc; i++) {
-			printf("%s:\n", argv[i]);
-			list_dir(argv[i],list_long,list_all,list_recursive);
-			putchar('\n');
+		if(optind+1==argc){
+			list_dir(argv[optind],list_line, list_long,list_all,list_recursive);
+		} else{
+			for (int i = optind; i < argc; i++) {
+				printf("%s:\n", argv[i]);
+				list_dir(argv[i],list_line, list_long,list_all,list_recursive);
+				putchar('\n');
+			}
 		}
 	}
 

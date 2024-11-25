@@ -72,7 +72,10 @@ class EStore {
     // TODO: More needed here.
 	double shippingCost;
 	double store_discount;
-	//locks
+	//locks:
+	// in fine mode, locks are used when a thread reads or writes elements in inventory. lock is used when a thread modifies properties in the EStore instance.
+	// when not in fine mode, only [lock] is used.
+	smutex_t locks[INVENTORY_SIZE];
 	smutex_t lock;
 	//conditions
 	scond_t scond_itemEditted;
@@ -102,5 +105,9 @@ class EStore {
     void buyManyItems(std::vector<int>* item_ids, double budget);
 
     bool fineModeEnabled() const { return fineMode; }
+	//if item_id==-1, then use [lock]
+	void flock(int item_id);
+	void funlock(int item_id);
+	smutex_t* getLock(int item_id);
 };
 

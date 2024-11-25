@@ -28,6 +28,12 @@ EStore(bool enableFineMode)
 	smutex_init(&lock);
 	//init condition variables
 	scond_init(&scond_itemEditted);
+	//init [locks] if finemode enabled
+	if(fineMode){
+		for(int i=0;i<INVENTORY_SIZE;++i){
+			smutex_init(locks+i);
+		}
+	}
 }
 
 EStore::
@@ -37,6 +43,12 @@ EStore::
 	smutex_destroy(&lock);
 	//condition variables
 	scond_destroy(&scond_itemEditted);
+	//destroy [locks] if findMode enabled
+	if(fineMode){
+		for(int i=0;i<INVENTORY_SIZE;++i){
+			smutex_init(locks+i);
+		}
+	}
 }
 
 /*
@@ -75,25 +87,21 @@ buyItem(int item_id, double budget)
     assert(!fineModeEnabled());
 
     // TODO: Your code here.
-	printf("EStore.cpp: buy item called\n");
-	smutex_lock(&lock);
+	flock(item_id);
 	Item& item=inventory[item_id];
 	//wait for the item to statisfy all the conditions
 	while(item.valid && (item.quantity==0 || getItemCost(item)>budget)){
-		printf("EStore.cpp: buyItem[%d]: waiting for conditions\n", item_id);
 		scond_wait(&scond_itemEditted, &lock);
 	}
 	//if item is not offered
 	if(!item.valid){
-		printf("EStore.cpp: buyItem[%d]: item is not offered\n", item_id);
-		smutex_unlock(&lock);
+		funlock(item_id);
 		return;
 	}
 	//buy the item
 	item.quantity--;
-	printf("EStore.cpp: buyItem[%d]: item bought\n", item_id);
 
-	smutex_unlock(&lock);
+	funlock(item_id);
 }
 
 /*
@@ -147,6 +155,37 @@ buyManyItems(vector<int>* item_ids, double budget)
     assert(fineModeEnabled());
 
     // TODO: Your code here.
+	for(int i:*item_ids){
+		flock(i);
+	}
+	//avoid shipping cost and store discount change
+	flock(-1);
+
+	double sum=0;
+	//check can each item be bought and add the sum. or return if cannot buy the item
+	for(int i:*item_ids){
+		if(!inventory[i].valid || inventory[i].quantity==0){
+			for(int j:*item_ids)
+				funlock(j);
+			funlock(-1);
+			printf("buyManyItems: some item cannot be bought, not buy\n");
+			return;
+		}
+		sum+=getItemCost(inventory[i]);
+	}
+	if(sum>budget){
+		printf("buyManyItems: sum>budge, not buy\n");
+		for(int i:*item_ids)
+			funlock(i);
+		funlock(-1);
+		return;
+	}
+	for(int i:*item_ids){
+		inventory[i].quantity--;
+		funlock(i);
+	}
+	//avoid shipping cost and store discount change
+	funlock(-1);
 }
 
 /*
@@ -167,22 +206,22 @@ addItem(int item_id, int quantity, double price, double discount)
 {
     // TODO: Your code here.
 	printf("EStore.cpp: add item called\n");
-	smutex_lock(&lock);
+	flock(item_id);
 
 	Item& item=inventory[item_id];
 	//the item already exists. do nothing
 	if(item.valid){
-		smutex_unlock(&lock);
+		funlock(item_id);
 		return;
 	}
 	item.valid=true;
 	item.quantity=quantity;
 	item.price=price;
 	item.discount=discount;
-	scond_broadcast(&scond_itemEditted, &lock);
+	scond_broadcast(&scond_itemEditted, getLock(item_id));
 	printf("EStore.cpp: addItem: id=%d\n", item_id);
 
-	smutex_unlock(&lock);
+	funlock(item_id);
 }
 
 /*
@@ -204,17 +243,17 @@ void EStore::
 removeItem(int item_id)
 {
     // TODO: Your code here.
-	smutex_lock(&lock);
+	flock(item_id);
 
 	Item& item=inventory[item_id];
 	if(!item.valid){
-		smutex_unlock(&lock);
+		funlock(item_id);
 		return;
 	}
 	item.valid=false;
-	scond_broadcast(&scond_itemEditted, &lock);
+	scond_broadcast(&scond_itemEditted, getLock(item_id));
 
-	smutex_unlock(&lock);
+	funlock(item_id);
 }
 
 /*
@@ -233,17 +272,17 @@ void EStore::
 addStock(int item_id, int count)
 {
     // TODO: Your code here.
-	smutex_lock(&lock);
+	flock(item_id);
 
 	Item& item=inventory[item_id];
 	if(!item.valid){
-		smutex_unlock(&lock);
+		funlock(item_id);
 		return;
 	}
 	item.quantity+=count;
-	scond_broadcast(&scond_itemEditted, &lock);
+	scond_broadcast(&scond_itemEditted, getLock(item_id));
 
-	smutex_unlock(&lock);
+	funlock(item_id);
 }
 
 /*
@@ -264,17 +303,17 @@ void EStore::
 priceItem(int item_id, double price)
 {
     // TODO: Your code here.
-	smutex_lock(&lock);
+	flock(item_id);
 
 	Item& item=inventory[item_id];
 	if(!item.valid){
-		smutex_unlock(&lock);
+		funlock(item_id);
 		return;
 	}
 	item.price=price;
-	scond_broadcast(&scond_itemEditted, &lock);
+	scond_broadcast(&scond_itemEditted, getLock(item_id));
 
-	smutex_unlock(&lock);
+	funlock(item_id);
 }
 
 /*
@@ -295,17 +334,17 @@ void EStore::
 discountItem(int item_id, double discount)
 {
     // TODO: Your code here.
-	smutex_lock(&lock);
+	flock(item_id);
 
 	Item& item=inventory[item_id];
 	if(!item.valid){
-		smutex_unlock(&lock);
+		funlock(item_id);
 		return;
 	}
 	item.discount=discount;
-	scond_broadcast(&scond_itemEditted, &lock);
+	scond_broadcast(&scond_itemEditted, getLock(item_id));
 
-	smutex_unlock(&lock);
+	funlock(item_id);
 }
 
 /*
@@ -324,16 +363,16 @@ void EStore::
 setShippingCost(double cost)
 {
     // TODO: Your code here.
-	smutex_lock(&lock);
+	flock(-1);
 
 	bool costDec=false;
 	if(shippingCost>cost)
 		costDec=true;
 	shippingCost=cost;
 	if(costDec)
-		scond_broadcast(&scond_itemEditted, &lock);
+		scond_broadcast(&scond_itemEditted, getLock(-1));
 
-	smutex_unlock(&lock);
+	funlock(-1);
 }
 
 /*
@@ -352,20 +391,40 @@ void EStore::
 setStoreDiscount(double discount)
 {
     // TODO: Your code here.
-	smutex_lock(&lock);
+	flock(-1);
 
 	bool costDec=false;
 	if(store_discount>discount)
 		costDec=true;
 	store_discount=discount;
 	if(costDec)
-		scond_broadcast(&scond_itemEditted, &lock);
+		scond_broadcast(&scond_itemEditted, getLock(-1));
 
-	smutex_unlock(&lock);
+	funlock(-1);
 }
 
 double EStore::getItemCost(const Item& item){
 	return shippingCost+(1-store_discount)*(item.price*(1-item.discount));
 }
 
+void EStore::flock(int item_id){
+	printf("flock(%d)\n",item_id);
+	if(fineMode && item_id !=-1)
+		smutex_lock(locks+item_id);
+	else smutex_lock(&lock);
+	printf("flock(%d) ends\n",item_id);
+}
 
+void EStore::funlock(int item_id){
+	printf("funlock(%d)\n",item_id);
+	if(fineMode && item_id!=-1)
+		smutex_unlock(locks+item_id);
+	else smutex_unlock(&lock);
+	printf("funlock(%d) ends\n",item_id);
+}
+
+smutex_t* EStore::getLock(int item_id){
+	if(fineMode && item_id!=-1)
+		return locks+item_id;
+	else return &lock;
+}

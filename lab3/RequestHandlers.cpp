@@ -220,7 +220,12 @@ void
 buy_many_items_handler(void *args)
 {
     // TODO: Your code here.
-	printf("Handling BuyManyItems: not implemented yet\n");
+	unsigned int id=id_tmp++;
+	BuyManyItemsReq* arg=(BuyManyItemsReq*)args;
+	printf("[%d] Handling BuyManyItems: items size=%d, budget=%lf\n", id, arg->item_ids.size(), arg->budget);
+	arg->store->buyManyItems(&arg->item_ids, arg->budget);
+	printf("[%d] ends\n", id);
+	delete arg;
 }
 
 /*

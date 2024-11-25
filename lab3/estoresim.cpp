@@ -1,7 +1,9 @@
 #include <cstring>
 #include <cstdlib>
+#include <iostream>
 
 #include "EStore.h"
+#include "RequestGenerator.h"
 #include "TaskQueue.h"
 
 class Simulation {
@@ -42,6 +44,14 @@ static void*
 supplierGenerator(void* arg)
 {
     // TODO: Your code here.
+	Simulation* sim=(Simulation*)arg;
+	//initialize SupplierRequestGenerator
+	SupplierRequestGenerator supplierRG(&sim->supplierTasks);
+	//
+	supplierRG.enqueueTasks(sim->maxTasks, &sim->store);
+	supplierRG.enqueueStops(sim->numSuppliers);
+
+	sthread_exit();
     return NULL; // Keep compiler happy.
 }
 
@@ -73,6 +83,12 @@ static void*
 customerGenerator(void* arg)
 {
     // TODO: Your code here.
+	Simulation* sim = (Simulation*)arg;
+	CustomerRequestGenerator customerRG(&sim->customerTasks, sim->store.fineModeEnabled());
+	customerRG.enqueueTasks(sim->maxTasks, &sim->store);
+	customerRG.enqueueStops(sim->numCustomers);
+
+	sthread_exit();
     return NULL; // Keep compiler happy.
 }
 
@@ -94,6 +110,11 @@ static void*
 supplier(void* arg)
 {
     // TODO: Your code here.
+	Simulation* sim=(Simulation*)arg;
+	while(true){
+		Task t = sim->supplierTasks.dequeue();
+		t.handler(t.arg);
+	}
     return NULL; // Keep compiler happy.
 }
 
@@ -115,6 +136,11 @@ static void*
 customer(void* arg)
 {
     // TODO: Your code here.
+	Simulation* sim=(Simulation*)arg;
+	while(true){
+		Task t = sim->customerTasks.dequeue();
+		t.handler(t.arg);
+	}
     return NULL; // Keep compiler happy.
 }
 
@@ -145,6 +171,34 @@ static void
 startSimulation(int numSuppliers, int numCustomers, int maxTasks, bool useFineMode)
 {
     // TODO: Your code here.
+	Simulation sim(useFineMode);
+	sim.maxTasks=maxTasks;
+	sim.numSuppliers=numSuppliers;
+	sim.numCustomers=numCustomers;
+
+	sthread_t supplierGeneratorTH, customerGeneratorTH;
+	sthread_create(&supplierGeneratorTH, supplierGenerator, &sim);
+	sthread_create(&customerGeneratorTH, customerGenerator, &sim);
+	//customer and supplier threads
+	sthread_t* suppliers=(sthread_t*)malloc(sizeof(sthread_t)*numSuppliers);
+	sthread_t* customers=(sthread_t*)malloc(sizeof(sthread_t)*numCustomers);
+	for(int i=0;i<numSuppliers;++i){
+		sthread_create(suppliers+i, supplier, &sim);
+	}
+	for(int i=0;i<numCustomers;++i){
+		sthread_create(customers+i, customer, &sim);
+	}
+	//join threads
+	sthread_join(supplierGeneratorTH);
+	sthread_join(customerGeneratorTH);
+	for(int i=0;i<numSuppliers;++i){
+		sthread_join(suppliers[i]);
+	}
+	for(int i=0;i<numCustomers;++i){
+		sthread_join(customers[i]);
+	}
+
+	return;
 }
 
 int main(int argc, char **argv)

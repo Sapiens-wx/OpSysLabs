@@ -1,4 +1,5 @@
 #pragma once
+#include "EStore.h"
 
 void add_item_handler(void *args);
 void remove_item_handler(void *args);

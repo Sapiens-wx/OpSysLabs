@@ -1,6 +1,7 @@
 #pragma once
 
 
+#include <queue>
 #include "sthread.h"
 
 typedef void (*handler_t) (void *); 
@@ -22,6 +23,9 @@ struct Task {
 class TaskQueue {
     private:
     // TODO: More needed here.
+	std::queue<Task> q;
+	smutex_t q_mutex;
+	scond_t scond_enqueue;
 
     public:
     TaskQueue();
@@ -35,7 +39,6 @@ class TaskQueue {
     void enqueue(Task task);
     Task dequeue();
 
-    private:
     int size();
     bool empty();
 };

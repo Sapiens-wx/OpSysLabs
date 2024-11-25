@@ -408,19 +408,15 @@ double EStore::getItemCost(const Item& item){
 }
 
 void EStore::flock(int item_id){
-	printf("flock(%d)\n",item_id);
 	if(fineMode && item_id !=-1)
 		smutex_lock(locks+item_id);
 	else smutex_lock(&lock);
-	printf("flock(%d) ends\n",item_id);
 }
 
 void EStore::funlock(int item_id){
-	printf("funlock(%d)\n",item_id);
 	if(fineMode && item_id!=-1)
 		smutex_unlock(locks+item_id);
 	else smutex_unlock(&lock);
-	printf("funlock(%d) ends\n",item_id);
 }
 
 smutex_t* EStore::getLock(int item_id){

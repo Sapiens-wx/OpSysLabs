@@ -77,6 +77,10 @@ void memdump_virtual(x86_64_pagetable* pagetable, const char* name);
 void memdump_virtual_all(void);
 void memdump_physical(void);
 
+//my memory functions
+uintptr_t allocate_page(pid_t owner);
+static x86_64_pagetable* copy_pagetable(x86_64_pagetable* src, pid_t owner);
+
 // kernel(command)
 //    Initialize the hardware and processes and start running. The `command`
 //    string is an optional string passed from the boot loader.
@@ -123,8 +127,8 @@ void kernel(const char* command) {
 
 void process_setup(pid_t pid, int program_number) {
     process_init(&processes[pid], 0);
-    processes[pid].p_pagetable = kernel_pagetable;
-    ++pageinfo[PAGENUMBER(kernel_pagetable)].refcount;
+    processes[pid].p_pagetable = copy_pagetable(kernel_pagetable, pid);
+    //++pageinfo[PAGENUMBER(kernel_pagetable)].refcount;
     int r = program_load(&processes[pid], program_number, NULL);
     assert(r >= 0);
     processes[pid].p_registers.reg_rsp = PROC_START_ADDR + PROC_SIZE * pid;
@@ -572,4 +576,43 @@ void memdump_virtual_all() {
       memdump_virtual(processes[i].p_pagetable, s);
     }
   }
+}
+uintptr_t allocate_page(pid_t owner){
+	for(int i=0;i<PAGENUMBER(MEMSIZE_PHYSICAL);++i){
+		if(!pageinfo[i].refcount){ //if is free, allocate this page to the process as pagetable
+			uintptr_t pt=PAGEADDRESS(i);
+			if(assign_physical_page(pt, owner)==-1){ //fails to assign physical page
+				panic("allocate_page failed because of assign_physical_page\n");
+				return (uintptr_t)NULL;
+			}
+			//set the values in the pagetable to 0
+			memset((void*)pt, 0, PAGESIZE);
+			return pt;
+		}
+	}
+	panic("allocate_page failed\n");
+	return (uintptr_t)NULL;
+}
+static x86_64_pagetable* copy_pagetable(x86_64_pagetable* src, pid_t owner){
+	x86_64_pagetable* proc_pagetables[5];
+	for(int i=0;i<5;++i){
+		proc_pagetables[i]=(x86_64_pagetable*)allocate_page(owner);
+		if(!proc_pagetables[i]) panic("fail to allocate page");
+	}
+    proc_pagetables[0]->entry[0] =
+        (x86_64_pageentry_t) proc_pagetables[1] | PTE_P | PTE_W | PTE_U;
+    proc_pagetables[1]->entry[0] =
+        (x86_64_pageentry_t) proc_pagetables[2] | PTE_P | PTE_W | PTE_U;
+    proc_pagetables[2]->entry[0] =
+        (x86_64_pageentry_t) proc_pagetables[3] | PTE_P | PTE_W | PTE_U;
+    proc_pagetables[2]->entry[1] =
+        (x86_64_pageentry_t) proc_pagetables[4] | PTE_P | PTE_W | PTE_U;
+	//copy the mappings if the mapping exists
+	for(uintptr_t i=0;i<MEMSIZE_VIRTUAL;i+=PAGESIZE){
+		vamapping vam=virtual_memory_lookup(src, i);
+		if(vam.perm&PTE_P){ //if the virtual page exists in the src pagetable, copy it
+			virtual_memory_map(proc_pagetables[0], i, vam.pa, PAGESIZE, vam.perm, NULL);
+		}
+	}
+	return proc_pagetables[0];
 }

@@ -281,7 +281,9 @@ void virtual_memory_init(void) {
         (x86_64_pageentry_t) &kernel_pagetables[4] | PTE_P | PTE_W | PTE_U;
 
     virtual_memory_map(kernel_pagetable, (uintptr_t) 0, (uintptr_t) 0,
-                       MEMSIZE_PHYSICAL, PTE_P | PTE_W | PTE_U, NULL);
+                       MEMSIZE_PHYSICAL, PTE_P | PTE_W, NULL);
+    virtual_memory_map(kernel_pagetable, (uintptr_t) 0xB8000, (uintptr_t) 0xB8000,
+                       PAGESIZE, PTE_P | PTE_W | PTE_U, NULL);
 
     lcr3((uintptr_t) kernel_pagetable);
 }

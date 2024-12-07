@@ -219,13 +219,13 @@ void exception(x86_64_registers* reg) {
         break;                  /* will not be reached */
 
     case INT_SYS_PAGE_ALLOC: {
-        uintptr_t addr = current->p_registers.reg_rdi;
-        int r = assign_physical_page(addr, current->p_pid);
-        if (r >= 0) {
-            virtual_memory_map(current->p_pagetable, addr, addr,
+        uintptr_t va = current->p_registers.reg_rdi;
+		uintptr_t pa = allocate_page(current->p_pid);
+        if (pa) { //if the aloocation succeeds
+            virtual_memory_map(current->p_pagetable, va, pa,
                                PAGESIZE, PTE_P | PTE_W | PTE_U, NULL);
-        }
-        current->p_registers.reg_rax = r;
+			current->p_registers.reg_rax = 0;
+        } else current->p_registers.reg_rax = -1;
         break;
     }
 
@@ -577,6 +577,8 @@ void memdump_virtual_all() {
     }
   }
 }
+//allocates a page, sets its memory to zero, and updates pageinfo.
+//on failure, returns NULL
 uintptr_t allocate_page(pid_t owner){
 	for(int i=0;i<PAGENUMBER(MEMSIZE_PHYSICAL);++i){
 		if(!pageinfo[i].refcount){ //if is free, allocate this page to the process as pagetable

@@ -80,6 +80,7 @@ void memdump_physical(void);
 //my memory functions
 uintptr_t allocate_page(pid_t owner);
 static x86_64_pagetable* copy_pagetable(x86_64_pagetable* src, pid_t owner);
+static void copy_process_memory(proc* dest, proc* src);
 
 // kernel(command)
 //    Initialize the hardware and processes and start running. The `command`
@@ -251,6 +252,28 @@ void exception(x86_64_registers* reg) {
         current->p_state = P_BROKEN;
         break;
     }
+
+	case INT_SYS_FORK:{
+		proc* childproc=NULL;
+		for(int i=1;i<NPROC;++i){
+			if(processes[i].p_state==P_FREE){
+				childproc=&processes[i];
+				childproc->p_pid=i;
+				break;
+			}
+		}
+		//if there is a empty slot
+		if(childproc){
+			childproc->p_registers=current->p_registers;
+			childproc->p_state=P_RUNNABLE;
+			childproc->p_pagetable=copy_pagetable(current->p_pagetable, childproc->p_pid);
+			copy_process_memory(childproc, current);
+			childproc->p_registers.reg_rax=0;
+			current->p_registers.reg_rax=childproc->p_pid;
+		} else
+			current->p_registers.reg_rax=-1;
+		break;
+	}
 
     default:
         panic("Unexpected exception %d!\n", reg->reg_intno);
@@ -616,4 +639,17 @@ static x86_64_pagetable* copy_pagetable(x86_64_pagetable* src, pid_t owner){
 		}
 	}
 	return proc_pagetables[0];
+}
+static void copy_process_memory(proc* dest, proc* src){
+	for(uintptr_t i=0;i<MEMSIZE_VIRTUAL;i+=PAGESIZE){
+		if(i==0xB8000) continue; //this is the console address
+		vamapping parentmap=virtual_memory_lookup(src->p_pagetable, i);
+		//the the virtual address is mapped and the owner is the source process
+		if(parentmap.pn!=-1 && parentmap.perm&PTE_U){
+			uintptr_t newpa=allocate_page(dest->p_pid);
+			assign_physical_page(newpa, dest->p_pid);
+			memcpy((void*)newpa, (void*)parentmap.pa, PAGESIZE);
+			virtual_memory_map(dest->p_pagetable, i, newpa, PAGESIZE, PTE_W|PTE_P|PTE_U, NULL);
+		}
+	}
 }

@@ -86,7 +86,7 @@ static int program_load_segment(proc* p, const elf_program* ph,
 
     // allocate memory
     for (uintptr_t addr = va; addr < end_mem; addr += PAGESIZE) {
-        if (assign_physical_page(addr, p->p_pid) < 0
+		if (assign_physical_page(addr, p->p_pid) < 0
             || virtual_memory_map(p->p_pagetable, addr, addr, PAGESIZE,
                                   PTE_P | PTE_W | PTE_U, allocator) < 0) {
             console_printf(CPOS(22, 0), 0xC000, "program_load_segment(pid %d): can't assign address %p\n", p->p_pid, addr);
@@ -100,6 +100,19 @@ static int program_load_segment(proc* p, const elf_program* ph,
     // copy data from executable image into process memory
     memcpy((uint8_t*) va, src, end_file - va);
     memset((uint8_t*) end_file, 0, end_mem - end_file);
+
+    // allocate memory
+    for (uintptr_t addr = va; addr < end_mem; addr += PAGESIZE) {
+		//if is read-only, then map as PTE_P|PTE_U, otherwise map as P|W|U
+		//if(ph->p_flags & ELF_PFLAG_WRITE) panic("a read-only address");
+        if (
+				((ph->p_flags & ELF_PFLAG_WRITE) == 0 && 
+					virtual_memory_map( p->p_pagetable, addr, addr, PAGESIZE, PTE_P | PTE_U, allocator))
+				){
+            console_printf(CPOS(22, 0), 0xC000, "program_load_segment(pid %d): can't assign address %p\n", p->p_pid, addr);
+            return -1;
+		}
+    }
 
     // restore kernel pagetable
     set_pagetable(kernel_pagetable);

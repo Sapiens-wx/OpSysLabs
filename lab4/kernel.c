@@ -642,14 +642,19 @@ static x86_64_pagetable* copy_pagetable(x86_64_pagetable* src, pid_t owner){
 }
 static void copy_process_memory(proc* dest, proc* src){
 	for(uintptr_t i=0;i<MEMSIZE_VIRTUAL;i+=PAGESIZE){
-		if(i==0xB8000) continue; //this is the console address
 		vamapping parentmap=virtual_memory_lookup(src->p_pagetable, i);
 		//the the virtual address is mapped and the owner is the source process
 		if(parentmap.pn!=-1 && parentmap.perm&PTE_U){
-			uintptr_t newpa=allocate_page(dest->p_pid);
-			assign_physical_page(newpa, dest->p_pid);
-			memcpy((void*)newpa, (void*)parentmap.pa, PAGESIZE);
-			virtual_memory_map(dest->p_pagetable, i, newpa, PAGESIZE, PTE_W|PTE_P|PTE_U, NULL);
+			//if the memory is writable, then assign a new page for the child
+			//and it should share the console page, so eliminate i==0xB8000
+			if(i!= 0xB8000 && parentmap.perm&PTE_W){
+				uintptr_t newpa=allocate_page(dest->p_pid);
+				assign_physical_page(newpa, dest->p_pid);
+				memcpy((void*)newpa, (void*)parentmap.pa, PAGESIZE);
+				virtual_memory_map(dest->p_pagetable, i, newpa, PAGESIZE, PTE_W|PTE_P|PTE_U, NULL);
+			} else{ //the child process shares a physical page with the parent, so increase the refcount of the physical page
+				pageinfo[parentmap.pn].refcount++;
+			}
 		}
 	}
 }

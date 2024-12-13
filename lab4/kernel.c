@@ -81,6 +81,7 @@ void memdump_physical(void);
 uintptr_t allocate_page(pid_t owner);
 static x86_64_pagetable* copy_pagetable(x86_64_pagetable* src, pid_t owner);
 static void copy_process_memory(proc* dest, proc* src);
+static void free_process_memory(x86_64_pagetable* pt);
 
 // kernel(command)
 //    Initialize the hardware and processes and start running. The `command`
@@ -267,11 +268,21 @@ void exception(x86_64_registers* reg) {
 			childproc->p_registers=current->p_registers;
 			childproc->p_state=P_RUNNABLE;
 			childproc->p_pagetable=copy_pagetable(current->p_pagetable, childproc->p_pid);
-			copy_process_memory(childproc, current);
-			childproc->p_registers.reg_rax=0;
-			current->p_registers.reg_rax=childproc->p_pid;
+			if(!childproc->p_pagetable){ //if there is not enough memory
+				current->p_registers.reg_rax=-1;
+			} else{ //there is enough memory, so proceeds to copy the process memory
+				copy_process_memory(childproc, current);
+				childproc->p_registers.reg_rax=0;
+				current->p_registers.reg_rax=childproc->p_pid;
+			}
 		} else
 			current->p_registers.reg_rax=-1;
+		break;
+	}
+
+	case INT_SYS_EXIT:{
+		free_process_memory(current->p_pagetable);
+		current->p_state=P_FREE;
 		break;
 	}
 
@@ -614,14 +625,25 @@ uintptr_t allocate_page(pid_t owner){
 			return pt;
 		}
 	}
-	panic("allocate_page failed\n");
+	//allocate_page failed
 	return (uintptr_t)NULL;
+}
+static void free_page(const int pn){
+	pageinfo[pn].refcount--;
+	if(!pageinfo[pn].refcount)
+		pageinfo[pn].owner=PO_FREE;
 }
 static x86_64_pagetable* copy_pagetable(x86_64_pagetable* src, pid_t owner){
 	x86_64_pagetable* proc_pagetables[5];
 	for(int i=0;i<5;++i){
 		proc_pagetables[i]=(x86_64_pagetable*)allocate_page(owner);
-		if(!proc_pagetables[i]) panic("fail to allocate page");
+		if(!proc_pagetables[i]){ //not enough memory
+			//free pages that are allocated
+			for(--i;i>=0;--i){
+				free_page(PAGENUMBER(proc_pagetables[i]));
+			}
+			return NULL;
+		}
 	}
     proc_pagetables[0]->entry[0] =
         (x86_64_pageentry_t) proc_pagetables[1] | PTE_P | PTE_W | PTE_U;
@@ -656,5 +678,24 @@ static void copy_process_memory(proc* dest, proc* src){
 				pageinfo[parentmap.pn].refcount++;
 			}
 		}
+	}
+}
+static void free_process_memory(x86_64_pagetable* pt){
+	for(uintptr_t i=0;i<MEMSIZE_VIRTUAL;i+=PAGESIZE){
+		vamapping map=virtual_memory_lookup(pt, i);
+		//if there is a mapping. ignore the console memory.
+		if(i!=0xB8000 && map.pn!=-1 && map.perm&PTE_U){ //call free page (--refcount; if refcount==0, free the page)
+			free_page(map.pn);
+		}
+	}
+	//free the page table itself
+	x86_64_pagetable* pts[5];
+	pts[0]=pt;
+	pts[1]=(x86_64_pagetable*)PTE_ADDR(pt->entry[0]);
+    pts[2]=(x86_64_pagetable*)PTE_ADDR(pts[1]->entry[0]);
+    pts[3]=(x86_64_pagetable*)PTE_ADDR(pts[2]->entry[0]);
+    pts[4]=(x86_64_pagetable*)PTE_ADDR(pts[2]->entry[1]);
+	for(int i=0;i<5;++i){
+		free_page(PAGENUMBER(pts[i]));
 	}
 }
